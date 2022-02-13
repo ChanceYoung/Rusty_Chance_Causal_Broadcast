@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 
 const MessageBoard = ({ peer }) => {
     const [connections, setConnections] = useState([])
     const persistentConnections = useRef([])
     const self = useRef(peer)
+    const persistentMessages = useRef([])
+    const eagerBroadcastSet = useRef(new Set())
     const [newConnectionTarget, setNewConnectionTarget] = useState('')
     const [recipients, setRecipients] = useState([])
     const [myLamportClock, setMyLamportClock] = useState(0)
@@ -12,6 +14,8 @@ const MessageBoard = ({ peer }) => {
 
     persistentConnections.current = connections
     self.current = peer
+    persistentMessages.current = messages
+    console.log(eagerBroadcastSet.current)
 
     self.current.on('connection', (conn) => {
         console.log(`Recieved connection from: ${conn.peer}`)
@@ -27,34 +31,27 @@ const MessageBoard = ({ peer }) => {
             : setMyLamportClock((prevState) => prevState + 1)
     }
 
-    const hasSent = (receivedmessage) => {
-        let count_array = messages.reduce(
-            (a, v) =>
-                v.originalLamport === receivedmessage.originalLamport
-                    ? a + 1
-                    : a,
-            0
-        )
-        if (count_array < 2) return false
-        else return true
-    }
-
     const onMessageReceived = (data) => {
         checkLamportClock(data.senderLamport)
+        const setString = data.originalLamport[0] + data.originalLamport[1]
         if (data.type === 'Broadcast') {
-            if (!hasSent(data)) {
+            if (!eagerBroadcastSet.current.has(setString)) {
                 persistentConnections.current.forEach((conn) => {
                     const newRedundantMessage = {
                         originalLamport: data.originalLamport,
                         senderLamport: [myLamportClock, peer.id],
                         type: 'Broadcast',
-                        messageText,
+                        messageText: data.messageText,
                     }
                     conn.send(newRedundantMessage)
                 })
 
                 setMessages((prevState) => [...prevState, data])
+                eagerBroadcastSet.current.add(setString)
                 setMyLamportClock((prev) => prev + 1)
+            } else {
+                setMessages((prevState) => [...prevState, data])
+                eagerBroadcastSet.current.add(setString)
             }
         } else {
             setMessages((prevState) => [...prevState, data])
@@ -129,6 +126,7 @@ const MessageBoard = ({ peer }) => {
             messageText,
         }
         setMessages((prev) => [...prev, newBroadcastMessage])
+        eagerBroadcastSet.current.add(myLamportClock + peer.id)
         persistentConnections.current.forEach((conn) => {
             conn.send(newBroadcastMessage)
         })
@@ -190,7 +188,7 @@ const MessageBoard = ({ peer }) => {
             </div>
             <ul>
                 <div>
-                    {messages.map((messageobj, i) => {
+                    {persistentMessages.current.map((messageobj, i) => {
                         if (
                             messageobj.senderLamport[1] ===
                             messageobj.originalLamport[1]
@@ -206,7 +204,7 @@ const MessageBoard = ({ peer }) => {
                                 return (
                                     <div key={i + 1}>
                                         <h4>
-                                            Sender:{' '}
+                                            Sender:
                                             {messageobj.senderLamport[1]}
                                         </h4>
                                         <p>{messageobj.messageText}</p>
