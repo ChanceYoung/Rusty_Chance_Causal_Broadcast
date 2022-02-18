@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import Peer from 'peerjs';
 
 
-function randId(){
+
+function randId() {
     let roomLength = 6
     let lowChar = "A".charCodeAt(0)
     let highChar = "Z".charCodeAt(0)
@@ -24,11 +25,12 @@ const CausalBroadcast = () => {
     const receivedMessagesRef = useRef(receivedMessageIds)
     const connectionsRef = useRef(listOfConnections)
     const lamportClockRef = useRef(lamportClock)
-    const [messageBuffer, setMessageBuffer] = useState([])
+    // const [messageBuffer, setMessageBuffer] = useState([])
+    const messageBufferRef = useRef([]);
     const [sendSeqence, setSendSequence] = useState(0)
     let delivered = useRef(new Map([[peer.id, 0]]))
 
-    
+    // messageBufferRef.current = messageBuffer;
     connectionsRef.current = listOfConnections
     receivedMessagesRef.current = receivedMessageIds
     lamportClockRef.current = lamportClock
@@ -40,42 +42,51 @@ const CausalBroadcast = () => {
     useEffect(() => {
         peer.on('connection', function (conn) {
             conn.on('data', function (data) {
-                console.log(chatLog)
+
                 //check in incoming connection is not already in list
                 if (connectionsRef.current.findIndex(x => x.peer === conn.peer) === -1) {
                     var connection = peer.connect(conn.peer)
                     setListOfConnections(currentListOfConnections => ([...currentListOfConnections, connection]))
-                    
+
                 }
                 var currentLamport = lamportClockRef.current > data.lamportClock ? lamportClockRef.current + 1 : data.lamportClock + 1;
 
                 setLamportClock(currentLamportClock => (currentLamport));
                 //check if message is already received
-               
+
                 if (receivedMessagesRef.current.findIndex(x => x === data.id) === -1) {
-                    setMessageBuffer(prev => [...prev, data])
-                    while(messageBuffer.length >0){
-                        messageBuffer.forEach(message => {
-                            if( message.deps <= delivered.current.get(peer.id))
-                            {
-                                //send message
-                                const broadcastedMessage = { id: data.id, lamportClock: currentLamport, originatorLamport: data.originatorLamport, message: data.message }
-                                //broadcast message to all connections
-                                
-                                connectionsRef.current.forEach(x => x.send(broadcastedMessage))
-                                messageBuffer.pop()
-                                delivered.current.set(peer.id, delivered.current.get(peer.id) + 1)
-                            }
+                    messageBufferRef.current.push(data);
+                    while (messageBufferRef.current.length > 0) {
+                        console.log("buffer is not empty: ", messageBufferRef.current.length)
+                        messageBufferRef.current.forEach((message, i) => {
+                            let deps = JSON.parse(message.dependencies);
+
+                            deps.forEach(
+                                (key, value) => {
+                                    if (delivered.current.get(key[0]) >= value || delivered.current.get(key[0]) === undefined) {       //maybe this needs additional logic?
+                                        setReceivedMessageIds(currentReceivedMessageIds => ([...currentReceivedMessageIds, conn.peer]))
+                                        setChatLog(currentChatLog => ([...currentChatLog, parseMessage(message)]))
+                                        console.log(messageBufferRef.current);
+                                        messageBufferRef.current = messageBufferRef.current.splice(i, 1);
+                                        console.log(messageBufferRef.current)
+                                        if (delivered.current.get(key[0]) === undefined) {
+                                            delivered.current.set(conn.peer, 0);
+                                        }
+                                        delivered.current.set(conn.peer, delivered.current.get(conn.peer) + 1)
+                                    }
+
+                                    messageBufferRef.current.pop();
+
+                                }
+                            )
                         })
                     }
-                    
-                    setReceivedMessageIds(currentReceivedMessageIds => ([...currentReceivedMessageIds, data.id]))
-                    setChatLog(currentChatLog => ([...currentChatLog, parseMessage(data)]))
-                    const broadcastedMessage = { id: data.id, lamportClock: currentLamport, originatorLamport: data.originatorLamport, message: data.message }
+
+                    const broadcastedMessage = { id: data.id, lamportClock: currentLamport, originatorLamport: data.originatorLamport, message: data.message}
                     //broadcast message to all connections
-                    
+
                     connectionsRef.current.forEach(x => x.send(broadcastedMessage))
-                    
+
                 }
             });
         });
@@ -103,24 +114,20 @@ const CausalBroadcast = () => {
     function onSubmitChat() {
         var currentLamport = lamportClock + 1
         setLamportClock(currentLamportClock => (currentLamport));
-        console.log("delivered " + delivered.current)
         let deps = new Map(delivered.current);
         deps.set(peer.id, sendSeqence);
-        console.log("dependencies " + deps)
-        var message= { id: Math.floor(Math.random() * 1000000), lamportClock: currentLamport, originatorLamport: currentLamport, message: inputBoxChatMessage, dependencies: JSON.stringify(Array.from(deps.entries()))}
-        console.log("message " + message)
+        console.log("dependencies " + JSON.stringify(deps.entries()))
+        var message = { id: Math.floor(Math.random() * 1000000), lamportClock: currentLamport, originatorLamport: currentLamport, message: inputBoxChatMessage, dependencies: JSON.stringify(Array.from(deps.entries())) }
+
         setChatLog([...chatLog, parseMessage(message)])
         //Causal stuff when sending a message
-        
+
         listOfConnections.forEach(connection => {
-            console.log(connection.peer)
             connection.send(message)
         });
-        setSendSequence(prev => prev+1)
-        deps.forEach(d => console.log(d))
+        setSendSequence(prev => prev + 1)
     }
-    console.log("sendsequence " + sendSeqence)
-
+    console.log("delivered " + JSON.stringify(delivered.current.entries()))
     return (
         <div className="container">
             <h1>ID: {peer.id}</h1>
@@ -143,7 +150,7 @@ const CausalBroadcast = () => {
                     return <p key={index}>{message}</p>
                 })}
             </div>
-            {listOfConnections.length == 0 ?
+            {listOfConnections.length === 0 ?
                 <p>not connected</p> :
                 <div>
                     <label>
